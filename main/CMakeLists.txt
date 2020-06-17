@@ -51,9 +51,9 @@ set(RESOURCE_LIST
     conversation_row.ui
     conversation_view.ui
     file_default_widget.ui
+    file_send_overlay.ui
     emojichooser.ui
     global_search.ui
-    conversation_content_view/image_toolbar.ui
     conversation_content_view/item_metadata_header.ui
     conversation_content_view/view.ui
     manage_accounts/account_row.ui
@@ -104,6 +104,7 @@ SOURCES
     src/ui/conversation_list_titlebar.vala
     src/ui/conversation_view.vala
     src/ui/conversation_view_controller.vala
+    src/ui/file_send_overlay.vala
     src/ui/global_search.vala
     src/ui/notifications.vala
     src/ui/settings_dialog.vala
@@ -130,6 +131,7 @@ SOURCES
 
     src/ui/contact_details/blocking_provider.vala
     src/ui/contact_details/settings_provider.vala
+    src/ui/contact_details/permissions_provider.vala
     src/ui/contact_details/dialog.vala
     src/ui/contact_details/muc_config_form_provider.vala
 
@@ -142,6 +144,7 @@ SOURCES
     src/ui/conversation_content_view/conversation_view.vala
     src/ui/conversation_content_view/date_separator_populator.vala
     src/ui/conversation_content_view/file_default_widget.vala
+    src/ui/conversation_content_view/file_image_widget.vala
     src/ui/conversation_content_view/file_widget.vala
     src/ui/conversation_content_view/message_widget.vala
     src/ui/conversation_content_view/subscription_notification.vala

@@ -1,6 +1,6 @@
 namespace Xmpp.Xep.UniqueStableStanzaIDs {
 
-private const string NS_URI = "urn:xmpp:sid:0";
+public const string NS_URI = "urn:xmpp:sid:0";
 
 private const string HINT_NO_PERMANENT_STORE = "no-permanent-store";
 private const string HINT_NO_STORE = "no-store";
@@ -14,7 +14,9 @@ public class Module : XmppStreamModule {
         stream.get_module(ServiceDiscovery.Module.IDENTITY).add_feature(stream, NS_URI);
     }
 
-    public override void detach(XmppStream stream) {}
+    public override void detach(XmppStream stream) {
+        stream.get_module(ServiceDiscovery.Module.IDENTITY).remove_feature(stream, NS_URI);
+    }
 
     public override string get_ns() { return NS_URI; }
 

@@ -7,14 +7,14 @@ public class Module : XmppStreamModule {
 
     private ReceivedPipelineListener received_pipeline_listener = new ReceivedPipelineListener();
 
-    public void enable(XmppStream stream) {
+    public async void enable(XmppStream stream) {
         Iq.Stanza iq = new Iq.Stanza.set(new StanzaNode.build("enable", NS_URI).add_self_xmlns());
-        stream.get_module(Iq.Module.IDENTITY).send_iq(stream, iq);
+        yield stream.get_module(Iq.Module.IDENTITY).send_iq_async(stream, iq);
     }
 
-    public void disable(XmppStream stream) {
+    public async void disable(XmppStream stream) {
         Iq.Stanza iq = new Iq.Stanza.set(new StanzaNode.build("disable", NS_URI).add_self_xmlns());
-        stream.get_module(Iq.Module.IDENTITY).send_iq(stream, iq);
+        yield stream.get_module(Iq.Module.IDENTITY).send_iq_async(stream, iq);
     }
 
     public override void attach(XmppStream stream) {
@@ -26,6 +26,7 @@ public class Module : XmppStreamModule {
     public override void detach(XmppStream stream) {
         stream.stream_negotiated.disconnect(enable);
         stream.get_module(MessageModule.IDENTITY).received_pipeline.disconnect(received_pipeline_listener);
+        stream.get_module(ServiceDiscovery.Module.IDENTITY).remove_feature(stream, NS_URI);
     }
 
     public override string get_ns() {

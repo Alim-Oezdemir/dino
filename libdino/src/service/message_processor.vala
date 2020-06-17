@@ -352,12 +352,21 @@ public class MessageProcessor : StreamInteractionModule, Object {
         XmppStream? stream = stream_interactor.get_stream(account);
         Xep.MessageArchiveManagement.MessageFlag? mam_message_flag = Xep.MessageArchiveManagement.MessageFlag.get_flag(message);
         Xep.MessageArchiveManagement.Flag? mam_flag = stream != null ? stream.get_flag(Xep.MessageArchiveManagement.Flag.IDENTITY) : null;
-        if (mam_message_flag != null && mam_flag != null && mam_flag.ns_ver == Xep.MessageArchiveManagement.NS_URI && mam_message_flag.mam_id != null) {
+        Xep.ServiceDiscovery.Module disco_module = stream.get_module(Xep.ServiceDiscovery.Module.IDENTITY);
+        if (mam_message_flag != null && mam_flag != null && mam_flag.ns_ver == Xep.MessageArchiveManagement.NS_URI_2 && mam_message_flag.mam_id != null) {
             new_message.server_id = mam_message_flag.mam_id;
         } else if (message.type_ == Xmpp.MessageStanza.TYPE_GROUPCHAT) {
-            new_message.server_id = Xep.UniqueStableStanzaIDs.get_stanza_id(message, new_message.counterpart.bare_jid);
+            bool server_supports_sid = (yield disco_module.has_entity_feature(stream, new_message.counterpart.bare_jid, Xep.UniqueStableStanzaIDs.NS_URI)) ||
+                    (yield disco_module.has_entity_feature(stream, new_message.counterpart.bare_jid, Xep.MessageArchiveManagement.NS_URI_2));
+            if (server_supports_sid) {
+                new_message.server_id = Xep.UniqueStableStanzaIDs.get_stanza_id(message, new_message.counterpart.bare_jid);
+            }
         } else if (message.type_ == Xmpp.MessageStanza.TYPE_CHAT) {
-            new_message.server_id = Xep.UniqueStableStanzaIDs.get_stanza_id(message, account.bare_jid);
+            bool server_supports_sid = (yield disco_module.has_entity_feature(stream, account.bare_jid, Xep.UniqueStableStanzaIDs.NS_URI)) ||
+                    (yield disco_module.has_entity_feature(stream, account.bare_jid, Xep.MessageArchiveManagement.NS_URI_2));
+            if (server_supports_sid) {
+                new_message.server_id = Xep.UniqueStableStanzaIDs.get_stanza_id(message, account.bare_jid);
+            }
         }
 
         if (mam_message_flag != null) new_message.local_time = mam_message_flag.server_time;
@@ -386,24 +395,20 @@ public class MessageProcessor : StreamInteractionModule, Object {
                     return Entities.Message.Type.GROUPCHAT_PM;
                 }
             } else {
-                SourceFunc callback = determine_message_type.callback;
                 XmppStream stream = stream_interactor.get_stream(account);
-                if (stream != null) stream.get_module(Xep.ServiceDiscovery.Module.IDENTITY).get_entity_categories(stream, message.counterpart.bare_jid, (stream, identities) => {
+                if (stream != null) {
+                    Gee.Set<Xep.ServiceDiscovery.Identity>? identities = yield stream.get_module(Xep.ServiceDiscovery.Module.IDENTITY).get_entity_identities(stream, message.counterpart.bare_jid);
                     if (identities == null) {
-                        message.type_ = Entities.Message.Type.CHAT;
-                        Idle.add((owned) callback);
-                        return;
+                        return Entities.Message.Type.CHAT;
                     }
                     foreach (Xep.ServiceDiscovery.Identity identity in identities) {
                         if (identity.category == Xep.ServiceDiscovery.Identity.CATEGORY_CONFERENCE) {
-                            message.type_ = Entities.Message.Type.GROUPCHAT_PM;
+                            return Entities.Message.Type.GROUPCHAT_PM;
                         } else {
-                            message.type_ = Entities.Message.Type.CHAT;
+                            return Entities.Message.Type.CHAT;
                         }
                     }
-                    Idle.add((owned) callback);
-                });
-                yield;
+                }
             }
         }
         return Entities.Message.Type.CHAT;
@@ -631,6 +636,12 @@ public class MessageProcessor : StreamInteractionModule, Object {
         stream.get_module(MessageModule.IDENTITY).send_message.begin(stream, new_message, (_, res) => {
             try {
                 stream.get_module(MessageModule.IDENTITY).send_message.end(res);
+
+                // The server might not have given us the resource we asked for. In that case, store the actual resource the message was sent with. Relevant for deduplication.
+                Jid? current_own_jid = stream.get_flag(Bind.Flag.IDENTITY).my_jid;
+                if (!conversation.type_.is_muc_semantic() && current_own_jid != null && !current_own_jid.equals(message.ourpart)) {
+                    message.ourpart = current_own_jid;
+                }
             } catch (IOStreamError e) {
                 message.marked = Entities.Message.Marked.UNSENT;
             }

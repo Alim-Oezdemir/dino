@@ -43,7 +43,6 @@ public class ConversationView : Box, Plugins.ConversationItemCollection, Plugins
     private bool reload_messages = true;
     ConversationItemSkeleton currently_highlighted = null;
     ContentMetaItem? current_meta_item = null;
-    bool mouse_inside = false;
     int last_y_root = -1;
 
     public ConversationView init(StreamInteractor stream_interactor) {
@@ -61,10 +60,19 @@ public class ConversationView : Box, Plugins.ConversationItemCollection, Plugins
         app.plugin_registry.register_conversation_addition_populator(new ChatStatePopulator(stream_interactor));
         app.plugin_registry.register_conversation_addition_populator(new DateSeparatorPopulator(stream_interactor));
 
+        // Rather than connecting to the leave event of the main_event_box directly,
+        // we connect to the parent event box that also wraps the overlaying message_menu_box.
+        // This eliminates the unwanted leave events emitted on the main_event_box when hovering
+        // the overlaying menu buttons.
         main_wrap_event_box.events = EventMask.ENTER_NOTIFY_MASK;
         main_wrap_event_box.events = EventMask.LEAVE_NOTIFY_MASK;
         main_wrap_event_box.leave_notify_event.connect(on_leave_notify_event);
         main_wrap_event_box.enter_notify_event.connect(on_enter_notify_event);
+        // The buttons of the overlaying message_menu_box may partially overlap the adjacent
+        // conversation items. We connect to the main_event_box directly to avoid emitting
+        // the pointer motion events as long as the pointer is above the message menu.
+        // This ensures that the currently highlighted item remains unchanged when the pointer
+        // reaches the overlapping part of a button.
         main_event_box.events = EventMask.POINTER_MOTION_MASK;
         main_event_box.motion_notify_event.connect(on_motion_notify_event);
 
@@ -95,51 +103,48 @@ public class ConversationView : Box, Plugins.ConversationItemCollection, Plugins
     }
 
     private bool on_enter_notify_event(Gdk.EventCrossing event) {
-        mouse_inside = true;
         update_highlight((int)event.x_root, (int)event.y_root);
         return false;
     }
 
     private bool on_leave_notify_event(Gdk.EventCrossing event) {
-        mouse_inside = false;
-        if (currently_highlighted != null) currently_highlighted.unset_state_flags(StateFlags.PRELIGHT);
+        if (currently_highlighted != null) {
+            currently_highlighted.unset_state_flags(StateFlags.PRELIGHT);
+            currently_highlighted = null;
+        }
         message_menu_box.visible = false;
         return false;
     }
 
     private bool on_motion_notify_event(Gdk.EventMotion event) {
-        mouse_inside = true;
         update_highlight((int)event.x_root, (int)event.y_root);
         return false;
     }
 
     private void update_highlight(int x_root, int y_root) {
-        if ((last_y_root - y_root).abs() <= 2) {
+        if (currently_highlighted != null && (last_y_root - y_root).abs() <= 2) {
             return;
         }
 
         last_y_root = y_root;
 
-        // Get pointer location in main
-        int geometry_x, geometry_y, geometry_width, geometry_height, dest_x, dest_y;
+        int toplevel_window_pos_x, toplevel_window_pos_y, dest_x, dest_y;
         Widget toplevel_widget = this.get_toplevel();
-        toplevel_widget.get_window().get_geometry(out geometry_x, out geometry_y, out geometry_width, out geometry_height);
-        toplevel_widget.translate_coordinates(main, x_root - geometry_x, y_root - geometry_y, out dest_x, out dest_y);
+        // Obtain the position of the main application window relative to the root window
+        toplevel_widget.get_window().get_origin(out toplevel_window_pos_x, out toplevel_window_pos_y);
+        // Get the pointer location relative to the `main` box
+        toplevel_widget.translate_coordinates(main, x_root - toplevel_window_pos_x, y_root - toplevel_window_pos_y, out dest_x, out dest_y);
 
         // Get widget under pointer
         int h = 0;
-        bool @break = false;
         ConversationItemSkeleton? w = null;
-        main.@foreach((widget) => {
-            if (break) return;
-
+        foreach (Widget widget in main.get_children()) {
             h += widget.get_allocated_height();
-            w = widget as ConversationItemSkeleton;
             if (h >= dest_y) {
-                @break = true;
-                return;
+                w = widget as ConversationItemSkeleton;
+                break;
             }
-        });
+        };
 
         if (currently_highlighted != null) currently_highlighted.unset_state_flags(StateFlags.PRELIGHT);
 
@@ -438,7 +443,7 @@ public class ConversationView : Box, Plugins.ConversationItemCollection, Plugins
     private void load_earlier_messages() {
         was_value = scrolled.vadjustment.value;
         if (!reloading_mutex.trylock()) return;
-        if (meta_items.size > 0) {
+        if (content_items.size > 0) {
             Gee.List<ContentMetaItem> items = content_populator.populate_before(conversation, (content_items.first() as ContentMetaItem).content_item, 20);
             foreach (ContentMetaItem item in items) {
                 do_insert_item(item);
@@ -450,7 +455,7 @@ public class ConversationView : Box, Plugins.ConversationItemCollection, Plugins
 
     private void load_later_messages() {
         if (!reloading_mutex.trylock()) return;
-        if (meta_items.size > 0 && !at_current_content) {
+        if (content_items.size > 0 && !at_current_content) {
             Gee.List<ContentMetaItem> items = content_populator.populate_after(conversation, (content_items.last() as ContentMetaItem).content_item, 20);
             if (items.size == 0) {
                 at_current_content = true;

@@ -38,7 +38,15 @@ public class FileManager : StreamInteractionModule, Object {
         this.add_sender(new JingleFileSender(stream_interactor));
     }
 
-    public async void send_file(string uri, Conversation conversation) {
+    public HashMap<int, long> get_file_size_limits(Conversation conversation) {
+        HashMap<int, long> ret = new HashMap<int, long>();
+        foreach (FileSender sender in file_senders) {
+            ret[sender.get_id()] = sender.get_file_size_limit(conversation);
+        }
+        return ret;
+    }
+
+    public async void send_file(File file, Conversation conversation) {
         FileTransfer file_transfer = new FileTransfer();
         file_transfer.account = conversation.account;
         file_transfer.counterpart = conversation.counterpart;
@@ -53,7 +61,6 @@ public class FileManager : StreamInteractionModule, Object {
         file_transfer.encryption = conversation.encryption;
 
         try {
-            File file = File.new_for_path(uri);
             FileInfo file_info = file.query_info("*", FileQueryInfoFlags.NONE);
             file_transfer.file_name = file_info.get_display_name();
             file_transfer.mime_type = file_info.get_content_type();
@@ -63,6 +70,7 @@ public class FileManager : StreamInteractionModule, Object {
             yield save_file(file_transfer);
 
             file_transfer.persist(db);
+            conversation.last_active = file_transfer.time;
             received_file(file_transfer, conversation);
         } catch (Error e) {
             file_transfer.state = FileTransfer.State.FAILED;
@@ -113,7 +121,6 @@ public class FileManager : StreamInteractionModule, Object {
 
             yield file_sender.send_file(conversation, file_transfer, file_send_data, file_meta);
 
-            conversation.last_active = file_transfer.time;
         } catch (Error e) {
             warning("Send file error: %s", e.message);
             file_transfer.state = FileTransfer.State.FAILED;
@@ -209,9 +216,10 @@ public class FileManager : StreamInteractionModule, Object {
     }
 
     public bool is_sender_trustworthy(FileTransfer file_transfer, Conversation conversation) {
+        if (file_transfer.direction == FileTransfer.DIRECTION_SENT) return true;
         Jid relevant_jid = stream_interactor.get_module(MucManager.IDENTITY).get_real_jid(file_transfer.from, conversation.account) ?? conversation.counterpart;
         bool in_roster = stream_interactor.get_module(RosterManager.IDENTITY).get_roster_item(conversation.account, relevant_jid) != null;
-        return file_transfer.direction == FileTransfer.DIRECTION_SENT || in_roster;
+        return in_roster;
     }
 
     private async FileMeta get_file_meta(FileProvider file_provider, FileTransfer file_transfer, Conversation conversation, FileReceiveData receive_data_) throws FileReceiveError {
@@ -394,6 +402,7 @@ public interface FileSender : Object {
     public signal void upload_available(Account account);
 
     public abstract bool is_upload_available(Conversation conversation);
+    public abstract long get_file_size_limit(Conversation conversation);
     public abstract bool can_send(Conversation conversation, FileTransfer file_transfer);
     public abstract async FileSendData? prepare_send_file(Conversation conversation, FileTransfer file_transfer, FileMeta file_meta) throws FileSendError;
     public abstract async void send_file(Conversation conversation, FileTransfer file_transfer, FileSendData file_send_data, FileMeta file_meta) throws FileSendError;

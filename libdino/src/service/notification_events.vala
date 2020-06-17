@@ -13,6 +13,7 @@ public class NotificationEvents : StreamInteractionModule, Object {
     public signal void notify_subscription_request(Conversation conversation);
     public signal void notify_connection_error(Account account, ConnectionManager.ConnectionError error);
     public signal void notify_muc_invite(Account account, Jid room_jid, Jid from_jid, string? password, string? reason);
+    public signal void notify_voice_request(Account account, Jid room_jid, Jid from_jid, string? nick, string? role, string? label);
 
     private StreamInteractor stream_interactor;
 
@@ -27,19 +28,14 @@ public class NotificationEvents : StreamInteractionModule, Object {
         stream_interactor.get_module(ContentItemStore.IDENTITY).new_item.connect(on_content_item_received);
         stream_interactor.get_module(PresenceManager.IDENTITY).received_subscription_request.connect(on_received_subscription_request);
         stream_interactor.get_module(MucManager.IDENTITY).invite_received.connect((account, room_jid, from_jid, password, reason) => notify_muc_invite(account, room_jid, from_jid, password, reason));
+        stream_interactor.get_module(MucManager.IDENTITY).voice_request_received.connect((account, room_jid, from_jid, nick, role, label) => notify_voice_request(account, room_jid, from_jid, nick, role, label));
         stream_interactor.connection_manager.connection_error.connect((account, error) => notify_connection_error(account, error));
     }
 
     private void on_content_item_received(ContentItem item, Conversation conversation) {
-
         ContentItem last_item = stream_interactor.get_module(ContentItemStore.IDENTITY).get_latest(conversation);
 
-        bool not_read_up_to = true;
-        MessageItem message_item = item as MessageItem;
-        if (message_item != null) {
-            not_read_up_to = conversation.read_up_to != null && !conversation.read_up_to.equals(message_item.message);
-        }
-        if (item.id != last_item.id && not_read_up_to) return;
+        if (item.id != last_item.id && last_item.id != conversation.read_up_to_item) return;
 
         if (!should_notify(item, conversation)) return;
         if (stream_interactor.get_module(ChatInteraction.IDENTITY).is_active_focus()) return;

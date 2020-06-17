@@ -16,6 +16,8 @@ public class EntityCapabilitiesStorage : Xep.EntityCapabilities.Storage, Object 
     }
 
     public void store_features(string entity, Gee.List<string> features) {
+        if (features_cache.contains(entity)) return;
+
         foreach (string feature in features) {
             db.entity_feature.insert()
                     .value(db.entity_feature.entity, entity)
@@ -24,14 +26,14 @@ public class EntityCapabilitiesStorage : Xep.EntityCapabilities.Storage, Object 
         }
     }
 
-    public void store_identities(string entity, Gee.List<Identity> identities) {
+    public void store_identities(string entity, Gee.Set<Identity> identities) {
         foreach (Identity identity in identities) {
             if (identity.category == Identity.CATEGORY_CLIENT) {
                 db.entity_identity.insert()
                         .value(db.entity_identity.entity, entity)
                         .value(db.entity_identity.category, identity.category)
                         .value(db.entity_identity.type, identity.type_)
-                        .value(db.entity_identity.name, identity.name)
+                        .value(db.entity_identity.entity_name, identity.name)
                         .perform();
                 return;
             }
@@ -60,7 +62,7 @@ public class EntityCapabilitiesStorage : Xep.EntityCapabilities.Storage, Object 
 
         RowOption row = db.entity_identity.select().with(db.entity_identity.entity, "=", entity).single().row();
         if (row.is_present()) {
-            identity = new Identity(row[db.entity_identity.category], row[db.entity_identity.type], row[db.entity_identity.name]);
+            identity = new Identity(row[db.entity_identity.category], row[db.entity_identity.type], row[db.entity_identity.entity_name]);
         }
         identity_cache[entity] = identity;
         return identity;

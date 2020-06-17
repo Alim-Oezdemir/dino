@@ -5,10 +5,15 @@ namespace Xmpp.Xep.EntityCapabilities {
 
     private Regex? sha1_base64_regex = null;
 
-    public string? get_caps_hash(Presence.Stanza presence) {
+    private Regex get_sha1_base64_regex() {
         if (sha1_base64_regex == null) {
             sha1_base64_regex = /^[A-Za-z0-9+\/]{27}=$/;
         }
+        return sha1_base64_regex;
+    }
+
+    public string? get_caps_hash(Presence.Stanza presence) {
+        Regex sha1_base64_regex = get_sha1_base64_regex();
         StanzaNode? c_node = presence.stanza.get_subnode("c", NS_URI);
         if (c_node == null) return null;
         string? ver_attribute = c_node.get_attribute("ver", NS_URI);
@@ -28,7 +33,7 @@ namespace Xmpp.Xep.EntityCapabilities {
 
         private string get_own_hash(XmppStream stream) {
             if (own_ver_hash == null) {
-                own_ver_hash = compute_hash(stream.get_module(ServiceDiscovery.Module.IDENTITY).identities, stream.get_flag(ServiceDiscovery.Flag.IDENTITY).features, new ArrayList<DataForms.DataForm>());
+                own_ver_hash = compute_hash(stream.get_flag(ServiceDiscovery.Flag.IDENTITY).own_identities, stream.get_flag(ServiceDiscovery.Flag.IDENTITY).own_features, new ArrayList<DataForms.DataForm>());
             }
             return own_ver_hash;
         }
@@ -37,11 +42,14 @@ namespace Xmpp.Xep.EntityCapabilities {
             stream.get_module(Presence.Module.IDENTITY).pre_send_presence_stanza.connect(on_pre_send_presence_stanza);
             stream.get_module(Presence.Module.IDENTITY).received_presence.connect(on_received_presence);
             stream.get_module(ServiceDiscovery.Module.IDENTITY).add_feature(stream, NS_URI);
+
+            check_features_node_ver(stream);
         }
 
         public override void detach(XmppStream stream) {
             stream.get_module(Presence.Module.IDENTITY).pre_send_presence_stanza.disconnect(on_pre_send_presence_stanza);
             stream.get_module(Presence.Module.IDENTITY).received_presence.disconnect(on_received_presence);
+            stream.get_module(ServiceDiscovery.Module.IDENTITY).remove_feature(stream, NS_URI);
         }
 
         public override string get_ns() { return NS_URI; }
@@ -60,14 +68,28 @@ namespace Xmpp.Xep.EntityCapabilities {
             string? caps_hash = get_caps_hash(presence);
             if (caps_hash == null) return;
 
+            process_hash.begin(stream, presence.from, caps_hash);
+        }
+
+        private void check_features_node_ver(XmppStream stream) {
+            StanzaNode? node = stream.features.get_subnode("c", NS_URI);
+            if (node == null) return;
+
+            string? ver_attribute = node.get_attribute("ver", NS_URI);
+            if (ver_attribute == null) return;
+
+            process_hash.begin(stream, stream.remote_name, ver_attribute);
+        }
+
+        private async void process_hash(XmppStream stream, Jid jid_from, string caps_hash) {
             Gee.List<string> capabilities = storage.get_features(caps_hash);
             ServiceDiscovery.Identity identity = storage.get_identities(caps_hash);
             if (identity == null) {
-                stream.get_module(ServiceDiscovery.Module.IDENTITY).request_info(stream, presence.from, (stream, query_result) => {
-                    store_entity_result(stream, caps_hash, query_result);
-                });
+                ServiceDiscovery.InfoResult? info_result = yield stream.get_module(ServiceDiscovery.Module.IDENTITY).request_info(stream, jid_from);
+                if (info_result == null) return;
+                store_entity_result(stream, caps_hash, info_result);
             } else {
-                stream.get_flag(ServiceDiscovery.Flag.IDENTITY).set_entity_features(presence.from, capabilities);
+                stream.get_flag(ServiceDiscovery.Flag.IDENTITY).set_entity_features(jid_from, capabilities);
             }
         }
 
@@ -86,47 +108,67 @@ namespace Xmpp.Xep.EntityCapabilities {
             }
         }
 
-        private static string compute_hash(Gee.List<ServiceDiscovery.Identity> identities, Gee.List<string> features, Gee.List<DataForms.DataForm> data_forms) {
+        private static string compute_hash(Gee.Set<ServiceDiscovery.Identity> identities_set, Gee.List<string> features, Gee.List<DataForms.DataForm> data_forms) {
+            var identities = new ArrayList<ServiceDiscovery.Identity>();
+            foreach (var identity in identities_set) identities.add(identity);
+
             identities.sort(compare_identities);
             features.sort();
 
-            string s = "";
+            StringBuilder sb = new StringBuilder();
             foreach (ServiceDiscovery.Identity identity in identities) {
-                string s_identity = identity.category + "/" + identity.type_ + "//";
-                if (identity.name != null) s_identity += identity.name;
-                s_identity += "<";
-                s += s_identity;
+                sb.append(sanitize(identity.category))
+                    .append("/")
+                    .append(sanitize(identity.type_))
+                    .append("//");
+                if (identity.name != null) {
+                    sb.append(sanitize(identity.name));
+                }
+                sb.append("<");
             }
             foreach (string feature in features) {
-                s += feature + "<";
+                sb.append(sanitize(feature))
+                        .append("<");
             }
 
             data_forms.sort(compare_data_forms);
             foreach (DataForms.DataForm data_form in data_forms) {
                 if (data_form.form_type == null) {
-                    // If [..] the FORM_TYPE field is not of type "hidden" or the form does not include a FORM_TYPE field, ignore the form but continue processing. (XEP-0115)
+                    // If [..] the FORM_TYPE field is not of type "hidden" or the form does not include a FORM_TYPE field, ignore the form but continue processing. (XEP-0115 5.4)
                     continue;
                 }
-                s += data_form.form_type + "<";
+                sb.append(sanitize(data_form.form_type))
+                        .append("<");
 
                 data_form.fields.sort(compare_data_fields);
                 foreach (DataForms.DataForm.Field field in data_form.fields) {
-                    s += field.var + "<";
+                    sb.append(sanitize(field.var))
+                        .append("<");
                     Gee.List<string> values = field.get_values();
                     values.sort();
                     foreach (string value in values) {
-                        s += value + "<";
+                        sb.append(sanitize(value ?? ""))
+                            .append("<");
                     }
                 }
             }
 
             Checksum c = new Checksum(ChecksumType.SHA1);
-            c.update(s.data, -1);
+            c.update(sb.str.data, -1);
             size_t size = 20;
             uint8[] buf = new uint8[size];
             c.get_digest(buf, ref size);
 
             return Base64.encode(buf);
+        }
+
+        /*
+         * If the four characters '&', 'l', 't', ';' appear consecutively in any of the factors of the verification
+         * string S [...] then that string of characters MUST be treated as literally '&lt;' and MUST NOT be converted to
+         * the character '<', because completing such a conversion would open the protocol to trivial attacks. (XEP-0115 5.1)
+         */
+        private static string sanitize(string s) {
+            return s.replace("<", "&lt;");
         }
 
         private static int compare_identities(ServiceDiscovery.Identity a, ServiceDiscovery.Identity b) {
@@ -154,7 +196,7 @@ namespace Xmpp.Xep.EntityCapabilities {
     }
 
     public interface Storage : Object {
-        public abstract void store_identities(string entity, Gee.List<ServiceDiscovery.Identity> identities);
+        public abstract void store_identities(string entity, Gee.Set<ServiceDiscovery.Identity> identities);
         public abstract void store_features(string entity, Gee.List<string> capabilities);
         public abstract ServiceDiscovery.Identity? get_identities(string entity);
         public abstract Gee.List<string> get_features(string entity);

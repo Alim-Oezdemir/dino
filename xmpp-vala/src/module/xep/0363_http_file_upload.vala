@@ -105,28 +105,37 @@ public class Module : XmppStreamModule {
     }
 
     public override void detach(XmppStream stream) {
-        stream.get_module(Bind.Module.IDENTITY).bound_to_resource.disconnect(query_availability);
+        stream.stream_negotiated.disconnect(query_availability);
     }
 
     public override string get_ns() { return NS_URI; }
     public override string get_id() { return IDENTITY.id; }
 
-    private void query_availability(XmppStream stream) {
-        stream.get_module(ServiceDiscovery.Module.IDENTITY).request_info(stream, stream.remote_name, (stream, info_result) => {
-            bool available = check_ns_in_info(stream, stream.remote_name, info_result);
-            if (!available) {
-                stream.get_module(ServiceDiscovery.Module.IDENTITY).request_items(stream, stream.remote_name, (stream, items_result) => {
-                    foreach (Xep.ServiceDiscovery.Item item in items_result.items) {
-                        stream.get_module(ServiceDiscovery.Module.IDENTITY).request_info(stream, item.jid, (stream, info_result) => {
-                            check_ns_in_info(stream, item.jid, info_result);
-                        });
-                    }
-                });
+    private async void query_availability(XmppStream stream) {
+        ServiceDiscovery.InfoResult? info_result = yield stream.get_module(ServiceDiscovery.Module.IDENTITY).request_info(stream, stream.remote_name);
+        bool available = check_ns_in_info(stream, stream.remote_name, info_result);
+        if (!available) {
+            ServiceDiscovery.ItemsResult? items_result = yield stream.get_module(ServiceDiscovery.Module.IDENTITY).request_items(stream, stream.remote_name);
+            if (items_result == null) return;
+
+            for (int i = 0; i < 2; i++) {
+                foreach (Xep.ServiceDiscovery.Item item in items_result.items) {
+
+                    // First try the promising items and only afterwards all the others
+                    bool promising_upload_item = item.jid.to_string().has_prefix("upload");
+                    if ((i == 0 && !promising_upload_item) || (i == 1) && promising_upload_item) continue;
+
+                    ServiceDiscovery.InfoResult? info_result2 = yield stream.get_module(ServiceDiscovery.Module.IDENTITY).request_info(stream, item.jid);
+                    bool available2 = check_ns_in_info(stream, item.jid, info_result2);
+                    if (available2) return;
+                }
             }
-        });
+        }
     }
 
-    private bool check_ns_in_info(XmppStream stream, Jid jid, Xep.ServiceDiscovery.InfoResult info_result) {
+    private bool check_ns_in_info(XmppStream stream, Jid jid, Xep.ServiceDiscovery.InfoResult? info_result) {
+        if (info_result == null) return false;
+
         bool ver_available = false;
         bool ver_0_available = false;
         foreach (string feature in info_result.features) {

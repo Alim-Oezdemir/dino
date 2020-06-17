@@ -43,6 +43,7 @@ public class Notifications : Object {
         stream_interactor.get_module(NotificationEvents.IDENTITY).notify_subscription_request.connect(notify_subscription_request);
         stream_interactor.get_module(NotificationEvents.IDENTITY).notify_connection_error.connect(notify_connection_error);
         stream_interactor.get_module(NotificationEvents.IDENTITY).notify_muc_invite.connect(on_invite_received);
+        stream_interactor.get_module(NotificationEvents.IDENTITY).notify_voice_request.connect(on_voice_request_received);
     }
 
     private async void notify_content_item(ContentItem content_item, Conversation conversation) {
@@ -138,6 +139,27 @@ public class Notifications : Object {
         notification.set_default_action_and_target_value("app.open-muc-join", new Variant.int32(group_conversation.id));
         notification.add_button_with_target_value(_("Deny"), "app.deny-invite", group_conversation.id);
         notification.add_button_with_target_value(_("Accept"), "app.open-muc-join", group_conversation.id);
+        GLib.Application.get_default().send_notification(null, notification);
+    }
+    
+    private async void on_voice_request_received(Account account, Jid room_jid, Jid from_jid, string? nick, string? role, string? label) {
+        Conversation? conversation = stream_interactor.get_module(ConversationManager.IDENTITY).get_conversation(room_jid, account, Conversation.Type.GROUPCHAT);
+        if (conversation == null) return;
+
+        string display_name = Util.get_participant_display_name(stream_interactor, conversation, from_jid);
+        string display_room = Util.get_conversation_display_name(stream_interactor, conversation);
+        Notification notification = new Notification(_("Permission request"));
+        string body = _("%s requests the permission to write in %s").printf(display_name, display_room);
+        notification.set_body(body);
+
+        try {
+            Cairo.ImageSurface jid_avatar = (yield Util.get_conversation_avatar_drawer(stream_interactor, conversation)).size(40, 40).draw_image_surface();
+            notification.set_icon(get_pixbuf_icon(jid_avatar));
+        } catch (Error e) { }
+
+        notification.set_default_action_and_target_value("app.accept-voice-request", new Variant.int32(conversation.id));
+        notification.add_button_with_target_value(_("Deny"), "app.deny-voice-request", conversation.id);
+        notification.add_button_with_target_value(_("Accept"), "app.accept-voice-request", conversation.id);
         GLib.Application.get_default().send_notification(null, notification);
     }
 

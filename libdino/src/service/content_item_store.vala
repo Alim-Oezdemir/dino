@@ -40,7 +40,7 @@ public class ContentItemStore : StreamInteractionModule, Object {
     }
 
     public Gee.List<ContentItem> get_items_from_query(QueryBuilder select, Conversation conversation) {
-        Gee.TreeSet<ContentItem> items = new Gee.TreeSet<ContentItem>(ContentItem.compare);
+        Gee.TreeSet<ContentItem> items = new Gee.TreeSet<ContentItem>(ContentItem.compare_func);
 
         foreach (var row in select) {
             int provider = row[db.content_item.content_type];
@@ -107,6 +107,15 @@ public class ContentItemStore : StreamInteractionModule, Object {
         QueryBuilder select = db.content_item.select()
             .with(db.content_item.content_type, "=", type)
             .with(db.content_item.foreign_id, "=", foreign_id);
+
+        Gee.List<ContentItem> item = get_items_from_query(select, conversation);
+
+        return item.size > 0 ? item[0] : null;
+    }
+
+    public ContentItem? get_item_by_id(Conversation conversation, int id) {
+        QueryBuilder select = db.content_item.select()
+                .with(db.content_item.id, "=", id);
 
         Gee.List<ContentItem> item = get_items_from_query(select, conversation);
 
@@ -246,7 +255,11 @@ public abstract class ContentItem : Object {
         this.mark = mark;
     }
 
-    public static int compare(ContentItem a, ContentItem b) {
+    public int compare(ContentItem c) {
+        return compare_func(this, c);
+    }
+
+    public static int compare_func(ContentItem a, ContentItem b) {
         int res = a.sort_time.compare(b.sort_time);
         if (res == 0) {
             res = a.display_time.compare(b.display_time);
@@ -269,13 +282,7 @@ public class MessageItem : ContentItem {
 
         this.message = message;
         this.conversation = conversation;
-
-        WeakRef weak_message = WeakRef(message);
-        message.notify["marked"].connect(() => {
-            Message? m = weak_message.get() as Message;
-            if (m == null) return;
-            mark = m.marked;
-        });
+        message.bind_property("marked", this, "mark");
     }
 }
 
@@ -297,16 +304,13 @@ public class FileItem : ContentItem {
         this.file_transfer = file_transfer;
         this.conversation = conversation;
 
+        // TODO those don't work
         if (message != null) {
-            WeakRef weak_message = WeakRef(message);
-            message.notify["marked"].connect(() => {
-                Message? m = weak_message.get() as Message;
-                if (m == null) return;
-                this.mark = m.marked;
-            });
+            message.bind_property("marked", this, "mark");
         } else if (file_transfer.direction == FileTransfer.DIRECTION_SENT) {
-            file_transfer.notify["state"].connect_after(() => {
-                this.mark = file_to_message_state(file_transfer.state);
+            file_transfer.bind_property("state", this, "mark", BindingFlags.DEFAULT, (_, from_value, ref to_value) => {
+                to_value = file_to_message_state((FileTransfer.State)from_value.get_enum());
+                return true;
             });
         }
     }

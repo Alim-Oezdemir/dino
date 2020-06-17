@@ -53,8 +53,6 @@ public class MainWindowController : Object {
             dialog.present();
         });
         window.accounts_placeholder.primary_button.clicked.connect(() => { app.activate_action("accounts", null); });
-        window.conversations_placeholder.primary_button.clicked.connect(() => { app.activate_action("add_chat", null); });
-        window.conversations_placeholder.secondary_button.clicked.connect(() => { app.activate_action("add_conference", null); });
         window.conversation_selector.conversation_selected.connect((conversation) => select_conversation(conversation));
 
         window.event.connect((event) => {
@@ -90,6 +88,13 @@ public class MainWindowController : Object {
         stream_interactor.get_module(ConversationManager.IDENTITY).conversation_activated.connect(() => update_stack_state());
         stream_interactor.get_module(ConversationManager.IDENTITY).conversation_deactivated.connect(() => update_stack_state());
         update_stack_state();
+
+        AccelGroup accel_group = new AccelGroup();
+        accel_group.connect(Gdk.Key.F, ModifierType.CONTROL_MASK, AccelFlags.VISIBLE, () => {
+            window.search_revealer.reveal_child = true;
+            return false;
+        });
+        window.add_accel_group(accel_group);
     }
 
     public void select_conversation(Conversation? conversation, bool do_reset_search = true, bool default_initialize_conversation = true) {
